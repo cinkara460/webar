@@ -1,240 +1,288 @@
 <!doctype html>
-<!--
-Copyright 2021 The Immersive Web Community Group
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software is furnished to do so,
-subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
-FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
-COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
-IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
-CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
--->
-<html>
-
+<html lang="en">
 <head>
-    <meta charset='utf-8'>
-    <meta name='viewport' content='width=device-width, initial-scale=1, user-scalable=no'>
-    <meta name='mobile-web-app-capable' content='yes'>
-    <meta name='apple-mobile-web-app-capable' content='yes'>
-    <link rel='icon' type='image/png' sizes='32x32' href='favicon-32x32.png'>
-    <link rel='icon' type='image/png' sizes='96x96' href='favicon-96x96.png'>
-    <link rel='stylesheet' href='css/common.css'>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <title>AR Model & Measure</title>
 
-    <title>Hit Test with Anchors</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      font-family: Arial, sans-serif;
+    }
+
+    header {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background: rgba(0, 0, 0, 0.6);
+      color: white;
+      padding: 10px;
+      border-radius: 8px;
+      z-index: 999;
+    }
+
+    select, button {
+      margin-top: 5px;
+      width: 100%;
+      padding: 6px;
+      border: none;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+
+    button {
+      background-color: #00b894;
+      color: white;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background-color: #019874;
+    }
+
+    #distanceLabel {
+      position: absolute;
+      color: white;
+      background: rgba(0,0,0,0.6);
+      padding: 4px 8px;
+      border-radius: 4px;
+      pointer-events: none;
+      display: none;
+      z-index: 999;
+    }
+  </style>
 </head>
 
 <body>
-    <header>
-        <details open>
-            <summary>Hit Test with Anchors</summary>
-            <p>
-                This sample demonstrates using hit testing to find intersections on real-world surfaces and then using
-                Anchors to attach a virtual object to that location.
-                <a class="back" href="./">Back</a>
-            </p>
-        </details>
-    </header>
-    <script type="module">
-        import { WebXRButton } from './js/util/webxr-button.js';
-        import { Scene } from './js/render/scenes/scene.js';
-        import { Renderer, createWebGLContext } from './js/render/core/renderer.js';
-        import { Node } from './js/render/core/node.js';
-        import { Gltf2Node } from './js/render/nodes/gltf2.js';
-        import { DropShadowNode } from './js/render/nodes/drop-shadow.js';
-        import { vec3 } from './js/render/math/gl-matrix.js';
-        import { Ray } from './js/render/math/ray.js';
+  <header>
+    <h3>AR Model & Measure</h3>
+    <label for="modelSelect">Choose model:</label>
+    <select id="modelSelect">
+      <option value="sunflower">🌻 Sunflower</option>
+      <option value="Stereo">Stereo</option>
+    </select>
+    <button id="measureButton">Start Measure</button>
+  </header>
 
-        // XR globals.
-        let xrButton = null;
-        let xrRefSpace = null;
-        let xrViewerSpace = null;
-        let xrHitTestSource = null;
+  <div id="distanceLabel">0.00 m</div>
 
-        // WebGL scene globals.
-        let gl = null;
-        let renderer = null;
-        let scene = new Scene();
-        scene.enableStats(false);
+  <script type="module">
+    import { WebXRButton } from './js/util/webxr-button.js';
+    import { Scene } from './js/render/scenes/scene.js';
+    import { Renderer, createWebGLContext } from './js/render/core/renderer.js';
+    import { Node } from './js/render/core/node.js';
+    import { Gltf2Node } from './js/render/nodes/gltf2.js';
+    import { DropShadowNode } from './js/render/nodes/drop-shadow.js';
+    import { vec3 } from './js/render/math/gl-matrix.js';
+    import { Ray } from './js/render/math/ray.js';
 
-        let arObject = new Node();
-        arObject.visible = false;
-        scene.addNode(arObject);
+    // === XR Globals ===
+    let xrButton = null;
+    let xrRefSpace = null;
+    let xrViewerSpace = null;
+    let xrHitTestSource = null;
 
-        let flower = new Gltf2Node({ url: 'media/gltf/sunflower/sunflower.gltf' });
-        arObject.addNode(flower);
+    // === WebGL Scene Setup ===
+    let gl = null;
+    let renderer = null;
+    let scene = new Scene();
+    scene.enableStats(false);
+    scene.clear = false; // Transparent background for AR
 
-        let reticle = new Gltf2Node({ url: 'media/gltf/reticle/reticle.gltf' });
-        reticle.visible = false;
-        scene.addNode(reticle);
-        let reticleHitTestResult = null;
+    // === Model Setup ===
+    const arObject = new Node();
+    arObject.visible = false;
+    scene.addNode(arObject);
 
-        // Having a really simple drop shadow underneath an object helps ground
-        // it in the world without adding much complexity.
-        let shadow = new DropShadowNode();
-        vec3.set(shadow.scale, 0.15, 0.15, 0.15);
-        arObject.addNode(shadow);
+    const models = {
+      sunflower: 'media/gltf/sunflower/sunflower.gltf',
+      stereo: 'media/gltf/stereo/stereo.gltf'
+    };
 
-        const MAX_FLOWERS = 30;
-        let flowers = [];
+    let currentModel = new Gltf2Node({ url: models.sunflower });
+    arObject.addNode(currentModel);
 
-        // Ensure the background is transparent for AR.
-        scene.clear = false;
+    const reticle = new Gltf2Node({ url: 'media/gltf/reticle/reticle.gltf' });
+    reticle.visible = false;
+    scene.addNode(reticle);
 
-        function initXR() {
-            xrButton = new WebXRButton({
-                onRequestSession: onRequestSession,
-                onEndSession: onEndSession,
-                textEnterXRTitle: "START AR",
-                textXRNotFoundTitle: "AR NOT FOUND",
-                textExitXRTitle: "EXIT  AR",
-            });
-            document.querySelector('header').appendChild(xrButton.domElement);
+    let reticleHitTestResult = null;
 
-            if (navigator.xr) {
-                navigator.xr.isSessionSupported('immersive-ar')
-                    .then((supported) => {
-                        xrButton.enabled = supported;
-                    });
-            }
+    // === Measure Mode Variables ===
+    let measureMode = false;
+    let firstPoint = null;
+    let secondPoint = null;
+    let lineNode = null;
+
+    const measureButton = document.getElementById('measureButton');
+    const distanceLabel = document.getElementById('distanceLabel');
+
+    measureButton.addEventListener('click', () => {
+      measureMode = !measureMode;
+      measureButton.textContent = measureMode ? 'Exit Measure' : 'Start Measure';
+      if (!measureMode && lineNode) {
+        scene.removeNode(lineNode);
+        lineNode = null;
+        distanceLabel.style.display = 'none';
+      }
+    });
+
+    // === Model Selection ===
+    const modelSelect = document.getElementById('modelSelect');
+    modelSelect.addEventListener('change', () => {
+      arObject.removeNode(currentModel);
+      currentModel = new Gltf2Node({ url: models[modelSelect.value] });
+      arObject.addNode(currentModel);
+    });
+
+    // === Drop Shadow ===
+    const shadow = new DropShadowNode();
+    vec3.set(shadow.scale, 0.15, 0.15, 0.15);
+    arObject.addNode(shadow);
+
+    // === Init XR ===
+    function initXR() {
+      xrButton = new WebXRButton({
+        onRequestSession: onRequestSession,
+        onEndSession: onEndSession,
+        textEnterXRTitle: "START AR",
+        textXRNotFoundTitle: "AR NOT FOUND",
+        textExitXRTitle: "EXIT AR"
+      });
+      document.body.appendChild(xrButton.domElement);
+
+      if (navigator.xr) {
+        navigator.xr.isSessionSupported('immersive-ar')
+          .then((supported) => { xrButton.enabled = supported; });
+      }
+    }
+
+    function onRequestSession() {
+      return navigator.xr.requestSession('immersive-ar', { requiredFeatures: ['local', 'hit-test', 'anchors'] })
+        .then((session) => {
+          xrButton.setSession(session);
+          onSessionStarted(session);
+        });
+    }
+
+    function onEndSession(session) {
+      xrHitTestSource?.cancel();
+      xrHitTestSource = null;
+      session.end();
+    }
+
+    function onSessionEnded(event) {
+      xrButton.setSession(null);
+    }
+
+    function onSessionStarted(session) {
+      session.addEventListener('end', onSessionEnded);
+      session.addEventListener('select', onSelect);
+
+      if (!gl) {
+        gl = createWebGLContext({ xrCompatible: true });
+        renderer = new Renderer(gl);
+        scene.setRenderer(renderer);
+      }
+
+      session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl) });
+
+      session.requestReferenceSpace('viewer').then((refSpace) => {
+        xrViewerSpace = refSpace;
+        session.requestHitTestSource({ space: xrViewerSpace }).then((hitTestSource) => {
+          xrHitTestSource = hitTestSource;
+        });
+      });
+
+      session.requestReferenceSpace('local').then((refSpace) => {
+        xrRefSpace = refSpace;
+        session.requestAnimationFrame(onXRFrame);
+      });
+    }
+
+    // === On Select ===
+    function onSelect(event) {
+      if (!reticle.visible) return;
+
+      if (measureMode) {
+        const pose = reticleHitTestResult.getPose(xrRefSpace);
+        const point = [pose.transform.position.x, pose.transform.position.y, pose.transform.position.z];
+
+        if (!firstPoint) {
+          firstPoint = point;
+        } else {
+          secondPoint = point;
+          drawMeasurement(firstPoint, secondPoint);
+          firstPoint = null;
+          secondPoint = null;
         }
+      } else {
+        // Place model
+        reticleHitTestResult.createAnchor().then((anchor) => {
+          const placed = new Gltf2Node({ url: models[modelSelect.value] });
+          const shadow = new DropShadowNode();
+          vec3.set(shadow.scale, 0.15, 0.15, 0.15);
+          placed.addNode(shadow);
+          scene.addNode(placed);
+          const pose = reticleHitTestResult.getPose(xrRefSpace);
+          placed.matrix = pose.transform.matrix;
+        });
+      }
+    }
 
-        function onRequestSession() {
-            return navigator.xr.requestSession('immersive-ar', { requiredFeatures: ['local', 'hit-test', 'anchors'] })
-                .then((session) => {
-                    xrButton.setSession(session);
-                    onSessionStarted(session);
-                });
+    // === Draw Measurement Line ===
+    function drawMeasurement(p1, p2) {
+      const dx = p2[0] - p1[0];
+      const dy = p2[1] - p1[1];
+      const dz = p2[2] - p1[2];
+      const distance = Math.sqrt(dx*dx + dy*dy + dz*dz);
+      const mid = [(p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2, (p1[2] + p2[2]) / 2];
+
+      if (lineNode) scene.removeNode(lineNode);
+      lineNode = new Node();
+      scene.addNode(lineNode);
+
+      const geometry = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(p1[0], p1[1], p1[2]),
+        new THREE.Vector3(p2[0], p2[1], p2[2])
+      ]);
+      const material = new THREE.LineBasicMaterial({ color: 0xff0000 });
+      const line = new THREE.Line(geometry, material);
+      renderer.scene.add(line);
+
+      // Distance label
+      distanceLabel.textContent = distance.toFixed(2) + ' m';
+      distanceLabel.style.display = 'block';
+      distanceLabel.style.left = '50%';
+      distanceLabel.style.top = '50%';
+    }
+
+    // === Frame Loop ===
+    function onXRFrame(t, frame) {
+      const session = frame.session;
+      const pose = frame.getViewerPose(xrRefSpace);
+
+      reticle.visible = false;
+
+      if (xrHitTestSource && pose) {
+        const hitTestResults = frame.getHitTestResults(xrHitTestSource);
+        if (hitTestResults.length > 0) {
+          const hitPose = hitTestResults[0].getPose(xrRefSpace);
+          reticle.visible = true;
+          reticle.matrix = hitPose.transform.matrix;
+          reticleHitTestResult = hitTestResults[0];
         }
+      }
 
-        function onSessionStarted(session) {
-            session.addEventListener('end', onSessionEnded);
-            session.addEventListener('select', onSelect);
+      scene.startFrame();
+      session.requestAnimationFrame(onXRFrame);
+      scene.drawXRFrame(frame, pose);
+      scene.endFrame();
+    }
 
-            if (!gl) {
-                gl = createWebGLContext({
-                    xrCompatible: true
-                });
-
-                renderer = new Renderer(gl);
-
-                scene.setRenderer(renderer);
-            }
-
-            session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl) });
-
-            // In this sample we want to cast a ray straight out from the viewer's
-            // position and render a reticle where it intersects with a real world
-            // surface. To do this we first get the viewer space, then create a
-            // hitTestSource that tracks it.
-            session.requestReferenceSpace('viewer').then((refSpace) => {
-                xrViewerSpace = refSpace;
-                session.requestHitTestSource({ space: xrViewerSpace }).then((hitTestSource) => {
-                    xrHitTestSource = hitTestSource;
-                });
-            });
-
-            session.requestReferenceSpace('local').then((refSpace) => {
-                xrRefSpace = refSpace;
-
-                session.requestAnimationFrame(onXRFrame);
-            });
-        }
-
-        function onEndSession(session) {
-            anchoredObjects.clear();
-            xrHitTestSource.cancel();
-            xrHitTestSource = null;
-            session.end();
-        }
-
-        function onSessionEnded(event) {
-            xrButton.setSession(null);
-        }
-
-        const MAX_ANCHORED_OBJECTS = 30;
-        let anchoredObjects = [];
-        function addAnchoredObjectsToScene(anchor) {
-            let flower = new Gltf2Node({ url: 'media/gltf/sunflower/sunflower.gltf' });
-            scene.addNode(flower);
-            anchoredObjects.push({
-                anchoredObject: flower,
-                anchor: anchor
-            });
-
-            // For performance reasons if we add too many objects start
-            // removing the oldest ones to keep the scene complexity
-            // from growing too much.
-            if (anchoredObjects.length > MAX_ANCHORED_OBJECTS) {
-                let objectToRemove = anchoredObjects.shift();
-                scene.removeNode(objectToRemove.anchoredObject);
-                objectToRemove.anchor.delete();
-            }
-        }
-
-        let rayOrigin = vec3.create();
-        let rayDirection = vec3.create();
-        function onSelect(event) {
-            if (reticle.visible) {
-                // Create an anchor.
-                reticleHitTestResult.createAnchor().then((anchor) => {
-                    addAnchoredObjectsToScene(anchor);
-                }, (error) => {
-                    console.error("Could not create anchor: " + error);
-                });
-            }
-        }
-
-        // Called every time a XRSession requests that a new frame be drawn.
-        function onXRFrame(t, frame) {
-            let session = frame.session;
-            let pose = frame.getViewerPose(xrRefSpace);
-
-            reticle.visible = false;
-
-            // If we have a hit test source, get its results for the frame
-            // and use the pose to display a reticle in the scene.
-            if (xrHitTestSource && pose) {
-                let hitTestResults = frame.getHitTestResults(xrHitTestSource);
-                if (hitTestResults.length > 0) {
-                    let pose = hitTestResults[0].getPose(xrRefSpace);
-                    reticle.visible = true;
-                    reticle.matrix = pose.transform.matrix;
-                    reticleHitTestResult = hitTestResults[0];
-                }
-            }
-
-            for (const { anchoredObject, anchor } of anchoredObjects) {
-                // only update the object's position if it's still in the list
-                // of frame.trackedAnchors
-                if (!frame.trackedAnchors.has(anchor)) {
-                    continue;
-                }
-                const anchorPose = frame.getPose(anchor.anchorSpace, xrRefSpace);
-                anchoredObject.matrix = anchorPose.transform.matrix;
-            }
-
-            scene.startFrame();
-
-            session.requestAnimationFrame(onXRFrame);
-
-            scene.drawXRFrame(frame, pose);
-
-            scene.endFrame();
-        }
-
-        // Start the XR application.
-        initXR();
-    </script>
+    initXR();
+  </script>
 </body>
-
 </html>
